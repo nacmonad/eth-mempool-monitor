@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"eth-mempool-monitor/internal/cache"
 	"eth-mempool-monitor/internal/decoder"
 	"fmt"
 	"log"
@@ -93,6 +94,10 @@ func MonitorMempool(ctx context.Context, tpsChan chan uint64, txChan chan string
 
 	header := http.Header{}
 	header.Set("Authorization", "Basic "+basicAuth(username, password))
+
+	// Init the RPC
+	cache.InitializeRPCClient()
+	defer cache.RpcClient.Close()
 
 	// Connect to the WebSocket
 	conn, _, err := dialer.Dial(wsEndpoint, header)

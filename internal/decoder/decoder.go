@@ -2,6 +2,7 @@ package decoder
 
 import (
 	"encoding/hex"
+	"eth-mempool-monitor/internal/cache"
 	"fmt"
 	"log"
 	"math/big"
@@ -34,7 +35,6 @@ type TransactionResult struct {
 // DecodeInputData decodes the input data of a transaction using the provided ABI
 func DecodeInputData(result TransactionResult, contractABI string, txDetailsChan chan string) {
 	// Remove the "0x" prefix
-
 	inputData := strings.TrimPrefix(result.Result.Input, "0x")
 
 	// Decode the method selector (first 4 bytes)
@@ -71,9 +71,7 @@ func DecodeInputData(result TransactionResult, contractABI string, txDetailsChan
 	}
 
 	// Send the decoded parameters in a human-readable way to txDetailsChan
-	//txDetailsChan <- "Decoded Parameters:\n"
 	for i, param := range params {
-		// Prepare a formatted string for each parameter
 		var formattedParam string
 
 		switch v := param.(type) {
@@ -83,6 +81,18 @@ func DecodeInputData(result TransactionResult, contractABI string, txDetailsChan
 		case common.Address:
 			// Format Ethereum addresses
 			formattedParam = fmt.Sprintf("  %s (%s): %s\n", method.Inputs[i].Name, method.Inputs[i].Type, v.Hex())
+		case []common.Address:
+			// Handle an array of Ethereum addresses and fetch token details
+			formattedParam = fmt.Sprintf("  %s (%s):\n", method.Inputs[i].Name, method.Inputs[i].Type)
+			for _, addr := range v {
+				// Fetch the token details
+				tokenInfo, err := cache.FetchTokenDetails(addr)
+				if err != nil {
+					formattedParam += fmt.Sprintf("    - %s (Token details fetch failed)\n", addr.Hex())
+				} else {
+					formattedParam += fmt.Sprintf("    - %s (%s: %s)\n", addr.Hex(), tokenInfo.Symbol, tokenInfo.Name)
+				}
+			}
 		default:
 			// Print the value directly if no special formatting is needed
 			formattedParam = fmt.Sprintf("  %s (%s): %v\n", method.Inputs[i].Name, method.Inputs[i].Type, param)
