@@ -11,10 +11,31 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
+// Define the struct type for the transaction result
+type TransactionResult struct {
+	Result struct {
+		BlockHash        string `json:"blockHash"`
+		BlockNumber      string `json:"blockNumber"`
+		From             string `json:"from"`
+		Gas              string `json:"gas"`
+		GasPrice         string `json:"gasPrice"`
+		Hash             string `json:"hash"`
+		Input            string `json:"input"`
+		Nonce            string `json:"nonce"`
+		To               string `json:"to"`
+		TransactionIndex string `json:"transactionIndex"`
+		Value            string `json:"value"`
+		V                string `json:"v"`
+		R                string `json:"r"`
+		S                string `json:"s"`
+	} `json:"result"`
+}
+
 // DecodeInputData decodes the input data of a transaction using the provided ABI
-func DecodeInputData(inputData string, contractABI string, txChan chan string) {
+func DecodeInputData(result TransactionResult, contractABI string, txDetailsChan chan string) {
 	// Remove the "0x" prefix
-	inputData = strings.TrimPrefix(inputData, "0x")
+
+	inputData := strings.TrimPrefix(result.Result.Input, "0x")
 
 	// Decode the method selector (first 4 bytes)
 	methodSelector := inputData[:8]
@@ -38,8 +59,9 @@ func DecodeInputData(inputData string, contractABI string, txChan chan string) {
 		return
 	}
 
-	// Send the method name to txChan
-	txChan <- fmt.Sprintf("Method Name: %s\n", method.Name)
+	// Send the method name to txDetailsChan
+	txDetailsChan <- fmt.Sprintf("TxHash: %s\n", result.Result.Hash)
+	txDetailsChan <- fmt.Sprintf("Method Name: %s\n", method.Name)
 
 	// Decode the parameters
 	params, err := method.Inputs.Unpack(data)
@@ -48,8 +70,8 @@ func DecodeInputData(inputData string, contractABI string, txChan chan string) {
 		return
 	}
 
-	// Send the decoded parameters in a human-readable way to txChan
-	txChan <- "Decoded Parameters:\n"
+	// Send the decoded parameters in a human-readable way to txDetailsChan
+	//txDetailsChan <- "Decoded Parameters:\n"
 	for i, param := range params {
 		// Prepare a formatted string for each parameter
 		var formattedParam string
@@ -67,6 +89,6 @@ func DecodeInputData(inputData string, contractABI string, txChan chan string) {
 		}
 
 		// Send the formatted string to txChan
-		txChan <- formattedParam
+		txDetailsChan <- formattedParam
 	}
 }

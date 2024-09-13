@@ -85,7 +85,7 @@ func init() {
 }
 
 // MonitorMempool connects to the Ethereum mempool via WebSocket and listens for new pending transactions
-func MonitorMempool(ctx context.Context, txChan chan string, tpsChan chan uint64) {
+func MonitorMempool(ctx context.Context, tpsChan chan uint64, txChan chan string, txDetailsChan chan string) {
 	// Setup a dialer for connecting with basic authentication
 	dialer := websocket.Dialer{
 		Proxy: http.ProxyFromEnvironment,
@@ -137,7 +137,7 @@ func MonitorMempool(ctx context.Context, txChan chan string, tpsChan chan uint64
 			currentTxCount := atomic.SwapUint64(&txCount, 0) // Atomically get and reset the transaction count
 			tpsChan <- currentTxCount
 		case msg := <-msgChan:
-			go processTransaction(msg, txChan) // Process transaction in a separate goroutine
+			go processTransaction(msg, txChan, txDetailsChan) // Process transaction in a separate goroutine
 		}
 	}
 }
@@ -161,7 +161,7 @@ func filterTransaction(inputData string) bool {
 }
 
 // Fetch the full transaction details and check if it pertains to one of the loaded contracts
-func fetchTransactionDetails(txHash string, txChan chan string) {
+func fetchTransactionDetails(txHash string, txChan chan string, txDetailsChan chan string) {
 	// Define the payload for the JSON-RPC request
 	payload := fmt.Sprintf(`{"jsonrpc":"2.0","method":"eth_getTransactionByHash","params":["%s"],"id":1}`, txHash)
 
@@ -218,7 +218,7 @@ func fetchTransactionDetails(txHash string, txChan chan string) {
 	// Check if the transaction is to one of the loaded contracts
 	for _, contract := range contracts {
 		if result.Result.To != "" && common.HexToAddress(result.Result.To) == common.HexToAddress(contract.Address) {
-			recentTx := fmt.Sprintf("Transaction to contract (%s): %s\n", contract.Name, txHash)
+			recentTx := fmt.Sprintf("Transaction to contract (%s) at %s:\n", contract.Name, time.Now())
 			recentTx += fmt.Sprintf("Hash: %s\n", result.Result.Hash)
 			recentTx += fmt.Sprintf("From: %s\n", result.Result.From)
 			recentTx += fmt.Sprintf("To: %s\n", result.Result.To)
@@ -234,7 +234,7 @@ func fetchTransactionDetails(txHash string, txChan chan string) {
 
 			txChan <- recentTx // Send the transaction details to the channel
 
-			decoder.DecodeInputData(result.Result.Input, string(contract.ABI), txChan) // Use the decoder to parse the input
+			decoder.DecodeInputData(result, string(contract.ABI), txDetailsChan) // Use the decoder to parse the input
 
 			break
 		}
@@ -242,7 +242,7 @@ func fetchTransactionDetails(txHash string, txChan chan string) {
 }
 
 // Process the transaction to check if it pertains to any of the loaded contracts
-func processTransaction(msg string, txChan chan string) {
+func processTransaction(msg string, txChan chan string, txDetailsChan chan string) {
 	// Define the correct struct based on the provided JSON
 	var tx struct {
 		Jsonrpc string `json:"jsonrpc"`
@@ -261,7 +261,7 @@ func processTransaction(msg string, txChan chan string) {
 	}
 
 	// Fetch the transaction details by its hash
-	fetchTransactionDetails(tx.Params.Result, txChan)
+	fetchTransactionDetails(tx.Params.Result, txChan, txDetailsChan)
 }
 
 // basicAuth encodes the username and password for basic authentication

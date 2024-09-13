@@ -10,42 +10,87 @@ import (
 
 	"eth-mempool-monitor/internal/mempool"
 
-	"github.com/gizak/termui/v3"
-	"github.com/gizak/termui/v3/widgets"
+	"github.com/rivo/tview"
 )
 
 func main() {
-	// Initialize Termui
-	if err := termui.Init(); err != nil {
-		log.Fatalf("failed to initialize termui: %v", err)
-	}
-	defer termui.Close()
-
 	// Create a new context and cancel function
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Set up channels for transaction updates and TPS
-	txChan := make(chan string)
-	tpsChan := make(chan uint64)
+	// Set up buffered channels for transaction updates, decoded transaction details, and TPS
+	txChan := make(chan string, 10)
+	txDetailsChan := make(chan string, 10)
+	tpsChan := make(chan uint64, 10)
 
 	// Setup signal handling to exit gracefully
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
-	// Initialize dashboard elements
-	tpsWidget := widgets.NewParagraph()
-	tpsWidget.Title = "Transactions Per Second (TPS)"
-	tpsWidget.Text = "0"
-	tpsWidget.SetRect(0, 0, 30, 3)
+	// Initialize application
+	app := tview.NewApplication()
 
-	txList := widgets.NewList()
-	txList.Title = "Recent Transactions"
-	txList.Rows = []string{}
-	txList.WrapText = false
-	txList.SetRect(0, 3, 100, 30)
+	// Initialize TextViews for transaction and details
+	tpsView := tview.NewTextView().
+		SetText("Transactions Per Second (TPS): 0").
+		SetDynamicColors(true).
+		SetScrollable(false)
 
-	// Render loop
+	txView := tview.NewTextView().
+		SetDynamicColors(true).
+		SetScrollable(true).
+		SetRegions(true).
+		SetChangedFunc(func() {
+			app.Draw()
+		})
+
+	txDetailsView := tview.NewTextView().
+		SetDynamicColors(true).
+		SetScrollable(true).
+		SetRegions(true).
+		SetChangedFunc(func() {
+			app.Draw()
+		})
+
+	// // Capture input to handle scrolling
+	// txDetailsView.SetInputCapture(func(event *tview.EventKey) *tview.EventKey {
+	// 	switch event.Key() {
+	// 	case tview.KeyUp: // Scroll up
+	// 		txDetailsView.ScrollUp()
+	// 	case tview.KeyDown: // Scroll down
+	// 		txDetailsView.ScrollDown()
+	// 	case tview.KeyPgUp: // Page up
+	// 		txDetailsView.ScrollPageUp()
+	// 	case tview.KeyPgDn: // Page down
+	// 		txDetailsView.ScrollPageDown()
+	// 	}
+	// 	return event
+	// })
+
+	// txView.SetInputCapture(func(event *tview.EventKey) *tview.EventKey {
+	// 	switch event.Key() {
+	// 	case tview.KeyUp: // Scroll up
+	// 		txView.ScrollUp()
+	// 	case tview.KeyDown: // Scroll down
+	// 		txView.ScrollDown()
+	// 	case tview.KeyPgUp: // Page up
+	// 		txView.ScrollPageUp()
+	// 	case tview.KeyPgDn: // Page down
+	// 		txView.ScrollPageDown()
+	// 	}
+	// 	return event
+	// })
+
+	// Create a grid layout
+	grid := tview.NewGrid().
+		SetRows(3, 0).    // Two rows: 3 height for the TPS, and the rest for the transaction views
+		SetColumns(0, 0). // Two columns: equally split for txView and txDetailsView
+		SetBorders(true).
+		AddItem(tpsView, 0, 0, 1, 2, 0, 0, false).     // TPS view at the top, spanning two columns
+		AddItem(txView, 1, 0, 1, 1, 0, 0, true).       // Transactions list on the left
+		AddItem(txDetailsView, 1, 1, 1, 1, 0, 0, true) // Transaction details on the right
+
+	// Improved goroutine for handling transaction data
 	go func() {
 		for {
 			select {
@@ -53,22 +98,32 @@ func main() {
 				cancel() // Signal to cancel the context and stop all goroutines
 				return
 			case tps := <-tpsChan:
-				tpsWidget.Text = fmt.Sprintf("%d", tps)
+				app.QueueUpdateDraw(func() {
+					tpsView.SetText(fmt.Sprintf("Transactions Per Second (TPS): %d", tps))
+				})
 			case tx := <-txChan:
-				txList.Rows = append([]string{tx}, txList.Rows...)
-				if len(txList.Rows) > 30 {
-					txList.Rows = txList.Rows[:30]
-				}
+				app.QueueUpdateDraw(func() {
+					currentTxText := txView.GetText(true)
+					newTxText := currentTxText + tx + "\n" // Append new transaction details
+					txView.SetText(newTxText)
+					txView.ScrollToEnd() // Scroll to end after updating
+				})
+			case txDetails := <-txDetailsChan:
+				app.QueueUpdateDraw(func() {
+					currentDetailsText := txDetailsView.GetText(true)
+					newDetailsText := currentDetailsText + txDetails + "\n" // Append new decoded transaction details
+					txDetailsView.SetText(newDetailsText)
+					txDetailsView.ScrollToEnd() // Scroll to end after updating
+				})
 			}
-			termui.Render(tpsWidget, txList)
 		}
 	}()
 
 	// Start the mempool monitoring
-	go mempool.MonitorMempool(ctx, txChan, tpsChan)
+	go mempool.MonitorMempool(ctx, tpsChan, txChan, txDetailsChan)
 
-	// Wait for the context to be canceled (either by interrupt or by cancel)
-	<-ctx.Done()
-
-	fmt.Println("Exiting application...")
+	// Run the application
+	if err := app.SetRoot(grid, true).Run(); err != nil {
+		log.Fatalf("failed to run application: %v", err)
+	}
 }
