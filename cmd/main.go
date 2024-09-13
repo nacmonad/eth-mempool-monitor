@@ -18,10 +18,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Set up buffered channels for transaction updates, decoded transaction details, and TPS
+	// Set up buffered channels for transaction updates, decoded transaction details, TPS, and logs
 	txChan := make(chan string, 10)
 	txDetailsChan := make(chan string, 10)
 	tpsChan := make(chan uint64, 10)
+	logChan := make(chan string, 10) // Channel for log messages
 
 	// Setup signal handling to exit gracefully
 	sigCh := make(chan os.Signal, 1)
@@ -30,7 +31,7 @@ func main() {
 	// Initialize application
 	app := tview.NewApplication()
 
-	// Initialize TextViews for transaction and details
+	// Initialize TextViews for transaction, details, and logs
 	tpsView := tview.NewTextView().
 		SetText("Transactions Per Second (TPS): 0").
 		SetDynamicColors(true).
@@ -52,45 +53,25 @@ func main() {
 			app.Draw()
 		})
 
-	// // Capture input to handle scrolling
-	// txDetailsView.SetInputCapture(func(event *tview.EventKey) *tview.EventKey {
-	// 	switch event.Key() {
-	// 	case tview.KeyUp: // Scroll up
-	// 		txDetailsView.ScrollUp()
-	// 	case tview.KeyDown: // Scroll down
-	// 		txDetailsView.ScrollDown()
-	// 	case tview.KeyPgUp: // Page up
-	// 		txDetailsView.ScrollPageUp()
-	// 	case tview.KeyPgDn: // Page down
-	// 		txDetailsView.ScrollPageDown()
-	// 	}
-	// 	return event
-	// })
+	logView := tview.NewTextView().
+		SetDynamicColors(true).
+		SetScrollable(true).
+		SetRegions(true).
+		SetChangedFunc(func() {
+			app.Draw()
+		})
 
-	// txView.SetInputCapture(func(event *tview.EventKey) *tview.EventKey {
-	// 	switch event.Key() {
-	// 	case tview.KeyUp: // Scroll up
-	// 		txView.ScrollUp()
-	// 	case tview.KeyDown: // Scroll down
-	// 		txView.ScrollDown()
-	// 	case tview.KeyPgUp: // Page up
-	// 		txView.ScrollPageUp()
-	// 	case tview.KeyPgDn: // Page down
-	// 		txView.ScrollPageDown()
-	// 	}
-	// 	return event
-	// })
-
-	// Create a grid layout
+	// Create a grid layout with an additional row for logs
 	grid := tview.NewGrid().
-		SetRows(3, 0).    // Two rows: 3 height for the TPS, and the rest for the transaction views
-		SetColumns(0, 0). // Two columns: equally split for txView and txDetailsView
+		SetRows(3, 0, 5). // Three rows: TPS, transactions, and logs
+		SetColumns(0, 0). // Two columns: transactions and details
 		SetBorders(true).
-		AddItem(tpsView, 0, 0, 1, 2, 0, 0, false).     // TPS view at the top, spanning two columns
-		AddItem(txView, 1, 0, 1, 1, 0, 0, true).       // Transactions list on the left
-		AddItem(txDetailsView, 1, 1, 1, 1, 0, 0, true) // Transaction details on the right
+		AddItem(tpsView, 0, 0, 1, 2, 0, 0, false).      // TPS view at the top, spanning two columns
+		AddItem(txView, 1, 0, 1, 1, 0, 0, true).        // Transactions list on the left
+		AddItem(txDetailsView, 1, 1, 1, 1, 0, 0, true). // Transaction details on the right
+		AddItem(logView, 2, 0, 1, 2, 0, 0, false)       // Log view at the bottom, spanning two columns
 
-	// Improved goroutine for handling transaction data
+	// Goroutine for handling transaction data and logs
 	go func() {
 		for {
 			select {
@@ -115,9 +96,19 @@ func main() {
 					txDetailsView.SetText(newDetailsText)
 					txDetailsView.ScrollToEnd() // Scroll to end after updating
 				})
+			case logMsg := <-logChan:
+				app.QueueUpdateDraw(func() {
+					currentLogText := logView.GetText(true)
+					newLogText := currentLogText + logMsg + "\n" // Append new log messages
+					logView.SetText(newLogText)
+					logView.ScrollToEnd() // Scroll to end after updating
+				})
 			}
 		}
 	}()
+
+	// Redirect standard log output to the log channel
+	log.SetOutput(logWriter(logChan))
 
 	// Start the mempool monitoring
 	go mempool.MonitorMempool(ctx, tpsChan, txChan, txDetailsChan)
@@ -126,4 +117,18 @@ func main() {
 	if err := app.SetRoot(grid, true).Run(); err != nil {
 		log.Fatalf("failed to run application: %v", err)
 	}
+}
+
+// logWriter is a custom log writer that sends log messages to the log channel
+func logWriter(logChan chan<- string) *writerAdapter {
+	return &writerAdapter{logChan: logChan}
+}
+
+type writerAdapter struct {
+	logChan chan<- string
+}
+
+func (w *writerAdapter) Write(p []byte) (n int, err error) {
+	w.logChan <- string(p)
+	return len(p), nil
 }
